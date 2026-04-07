@@ -4,7 +4,12 @@
       "Bash(brew list:*)",
       "Bash(/usr/local/bin/python3 --version)",
       "Bash(/usr/bin/python3 --version)",
-      "Bash(/usr/local/bin/python3 -m venv /Users/scottchalfant/Documents/work/agent/backend/.venv)"
+      "Bash(/usr/local/bin/python3 -m venv /Users/scottchalfant/Documents/work/agent/backend/.venv)",
+      "Read(//^### |^## /**)",
+      "Bash(curl -s http://localhost:8080/health)",
+      "Bash(curl -s -X POST http://localhost:8080/api/chat -H 'Content-Type: application/json' -d '{\"message\":\"show me sales by category\"}')",
+      "Bash(curl -s -N -X POST http://localhost:8080/api/chat -H 'Content-Type: application/json' -d '{\"message\":\"show me sales by category and subcategory as a hierarchy\"}')",
+      "Bash(kill %1)"
     ]
   }
 }

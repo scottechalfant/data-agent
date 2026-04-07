@@ -4,7 +4,21 @@ export interface ChatRequest {
 }
 
 export interface ChartSpec {
-  type: "line" | "bar" | "pie";
+  type:
+    | "line"
+    | "bar"
+    | "stacked_bar"
+    | "horizontal_bar"
+    | "area"
+    | "stacked_area"
+    | "pie"
+    | "scatter"
+    | "combo"
+    | "heatmap"
+    | "waterfall"
+    | "funnel"
+    | "treemap"
+    | "radar";
   title: string;
   x_key: string;
   y_keys: string[];
@@ -22,11 +36,18 @@ export interface StepLog {
   reasoning?: string | null;
 }
 
+export interface HierarchyTableSpec {
+  hierarchy_keys: string[];
+  value_keys: string[];
+  data: Record<string, unknown>[];
+}
+
 export interface ChatResponse {
   conversation_id: string;
   message: string;
   data?: Record<string, unknown>[];
   charts?: ChartSpec[];
+  hierarchy_tables?: HierarchyTableSpec[];
   steps?: StepLog[];
   tool_calls_made: string[];
 }
@@ -46,6 +67,13 @@ export interface TrendReport {
   created_at: string;
 }
 
+export interface ClarificationData {
+  question: string;
+  response_type: "free_text" | "multiple_choice";
+  options: string[];
+  conversation_id: string;
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -53,4 +81,8 @@ export interface Message {
   charts?: ChartSpec[];
   steps?: StepLog[];
   toolCalls?: string[];
+  clarification?: ClarificationData;
+  hierarchyTables?: HierarchyTableSpec[];
+  timestamp?: number;
+  durationMs?: number;
 }

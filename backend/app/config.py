@@ -4,12 +4,14 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     google_application_credentials: str = ""
     google_cloud_project: str = "velky-brands"
-    gemini_model: str = "gemini-2.5-pro"
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_model_fast: str = "gemini-2.5-flash"  # for lightweight calls (clarification, plan)
     bq_max_rows: int = 5000
     bq_max_bytes_billed: int = 107_374_182_400  # 100 GB
 
     gcs_bucket: str = "velky-brands-data-agent"
     gcs_knowledge_prefix: str = "knowledge/"
+    gcs_core_knowledge_file: str = "datamodel_compact.md"
     gcs_memories_path: str = "memories.md"
 
     slack_webhook_url: str = ""

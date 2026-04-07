@@ -1,6 +1,51 @@
 import { useState } from "react";
 import type { StepLog } from "../types/api";
 
+/**
+ * Basic SQL formatter: uppercases keywords and ensures newlines before major clauses.
+ */
+function formatSql(sql: string): string {
+  const keywords = [
+    "SELECT", "FROM", "WHERE", "AND", "OR", "JOIN", "LEFT JOIN", "RIGHT JOIN",
+    "INNER JOIN", "CROSS JOIN", "FULL JOIN", "ON", "GROUP BY", "ORDER BY",
+    "HAVING", "LIMIT", "OFFSET", "UNION ALL", "UNION", "WITH", "AS",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "BETWEEN", "IN", "NOT",
+    "IS NULL", "IS NOT NULL", "ASC", "DESC", "DISTINCT",
+  ];
+
+  // Normalize whitespace
+  let formatted = sql.replace(/\s+/g, " ").trim();
+
+  // Add newlines before major clauses
+  const lineBreakBefore = [
+    "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "HAVING",
+    "LIMIT", "UNION ALL", "UNION", "LEFT JOIN", "RIGHT JOIN",
+    "INNER JOIN", "CROSS JOIN", "FULL JOIN", "JOIN", "WITH",
+  ];
+
+  for (const kw of lineBreakBefore) {
+    const regex = new RegExp(`\\b(${kw})\\b`, "gi");
+    formatted = formatted.replace(regex, `\n$1`);
+  }
+
+  // Indent continuation lines
+  const lines = formatted.split("\n").filter((l) => l.trim());
+  const indentAfter = new Set(["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "HAVING", "WITH"]);
+
+  const result: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const firstWord = trimmed.split(/\s/)[0].toUpperCase();
+    if (indentAfter.has(firstWord) || firstWord.endsWith("JOIN")) {
+      result.push(trimmed);
+    } else {
+      result.push("  " + trimmed);
+    }
+  }
+
+  return result.join("\n");
+}
+
 interface LogicPanelProps {
   steps: StepLog[];
 }
@@ -14,9 +59,21 @@ const STEP_COLORS: Record<string, string> = {
   Tool: "#455a64",
 };
 
+function parseStepLabel(description: string): { label: string; detail: string } {
+  const colonIdx = description.indexOf(": ");
+  if (colonIdx > 0) {
+    return {
+      label: description.slice(0, colonIdx),
+      detail: description.slice(colonIdx + 2),
+    };
+  }
+  return { label: description, detail: "" };
+}
+
 function StepDetail({ step }: { step: StepLog }) {
   const [expanded, setExpanded] = useState(false);
-  const color = STEP_COLORS[step.description] ?? "#455a64";
+  const { label, detail } = parseStepLabel(step.description);
+  const color = STEP_COLORS[label] ?? "#455a64";
 
   return (
     <div style={{ marginBottom: 8 }}>
@@ -39,22 +96,15 @@ function StepDetail({ step }: { step: StepLog }) {
             padding: "1px 6px",
             borderRadius: 3,
             whiteSpace: "nowrap",
+            flexShrink: 0,
           }}
         >
-          {step.description}
+          {label}
         </span>
-        <span style={{ fontSize: 12, color: "#333" }}>
-          {step.tool ? (
-            <>
-              <code style={{ fontSize: 11, background: "#e8e8e8", padding: "1px 4px", borderRadius: 2 }}>
-                {step.tool}
-              </code>
-            </>
-          ) : (
-            "Final response"
-          )}
+        <span style={{ fontSize: 12, color: "#333", flex: 1, minWidth: 0 }}>
+          {detail || (step.tool ? step.tool : "Final response")}
         </span>
-        <span style={{ fontSize: 11, color: "#999", marginLeft: "auto" }}>
+        <span style={{ fontSize: 11, color: "#999", flexShrink: 0 }}>
           {expanded ? "Hide" : "Details"}
         </span>
       </div>
@@ -85,22 +135,24 @@ function StepDetail({ step }: { step: StepLog }) {
           {step.tool_input && (
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontWeight: 600, color: "#555", marginBottom: 2 }}>
-                Input
+                {step.tool === "run_query" ? "SQL Query" : "Input"}
               </div>
               {step.tool === "run_query" && step.tool_input.sql ? (
                 <pre
                   style={{
-                    background: "#f5f5f5",
-                    padding: 8,
-                    borderRadius: 4,
+                    background: "#1e1e1e",
+                    color: "#d4d4d4",
+                    padding: 12,
+                    borderRadius: 6,
                     overflow: "auto",
-                    fontSize: 11,
+                    fontSize: 12,
+                    lineHeight: 1.5,
                     margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
+                    whiteSpace: "pre",
+                    fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
                   }}
                 >
-                  {String(step.tool_input.sql)}
+                  {formatSql(String(step.tool_input.sql))}
                 </pre>
               ) : (
                 <pre

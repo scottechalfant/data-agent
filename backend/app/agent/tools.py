@@ -7,6 +7,10 @@ from app.config import settings
 
 _bq_client: bigquery.Client | None = None
 
+# Cache recent query results to avoid re-running identical SQL
+_query_cache: dict[str, dict] = {}
+_last_query_result: dict | None = None
+
 
 def get_bq_client() -> bigquery.Client:
     global _bq_client
@@ -15,15 +19,27 @@ def get_bq_client() -> bigquery.Client:
     return _bq_client
 
 
+def get_last_query_result() -> dict | None:
+    """Return the most recent query result (used by create_chart)."""
+    return _last_query_result
+
+
 # ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
 
 def run_query(sql: str) -> dict:
     """Execute a read-only SQL query against BigQuery and return results."""
+    global _last_query_result
     normalized = sql.strip().rstrip(";").upper()
     if not normalized.startswith("SELECT") and not normalized.startswith("WITH"):
         return {"error": "Only SELECT queries are allowed."}
+
+    # Return cached result for identical SQL
+    cache_key = sql.strip()
+    if cache_key in _query_cache:
+        _last_query_result = _query_cache[cache_key]
+        return _last_query_result
 
     client = get_bq_client()
 
@@ -52,13 +68,18 @@ def run_query(sql: str) -> dict:
         rows = [dict(row) for row in result]
         if len(rows) > settings.bq_max_rows:
             rows = rows[: settings.bq_max_rows]
-            return {
+            res = {
                 "rows": rows,
                 "truncated": True,
                 "total_rows": result.total_rows,
                 "message": f"Results truncated to {settings.bq_max_rows} rows.",
             }
-        return {"rows": rows, "total_rows": len(rows)}
+        else:
+            res = {"rows": rows, "total_rows": len(rows)}
+        # Cache the result
+        _query_cache[cache_key] = res
+        _last_query_result = res
+        return res
     except Exception as e:
         return {"error": f"Query execution failed: {str(e)}"}
 
@@ -136,14 +157,26 @@ def create_chart(
     title: str,
     x_key: str,
     y_keys: list[str],
-    data: list[dict],
+    data: list[dict] | None = None,
+    use_last_query: bool = False,
     x_label: str = "",
     y_label: str = "",
 ) -> dict:
     """Create a chart specification to be rendered in the UI."""
-    valid_types = ("line", "bar", "pie")
+    valid_types = (
+        "line", "bar", "stacked_bar", "horizontal_bar", "area", "stacked_area",
+        "pie", "scatter", "combo", "heatmap", "waterfall", "funnel", "treemap", "radar",
+    )
     if chart_type not in valid_types:
         return {"error": f"Invalid chart_type '{chart_type}'. Must be one of: {valid_types}"}
+
+    # Resolve data source
+    if use_last_query or not data:
+        last = get_last_query_result()
+        if last and "rows" in last:
+            data = last["rows"]
+        elif not data:
+            return {"error": "No data provided and no previous query results available."}
 
     if not data:
         return {"error": "No data provided for chart."}
@@ -169,6 +202,39 @@ def create_chart(
     }
 
 
+def create_hierarchy_table(
+    hierarchy_keys: list[str],
+    value_keys: list[str],
+    data: list[dict] | None = None,
+    use_last_query: bool = False,
+) -> dict:
+    """Create a collapsible hierarchy table from grouped data."""
+    # Resolve data source
+    if use_last_query or not data:
+        last = get_last_query_result()
+        if last and "rows" in last:
+            data = last["rows"]
+        elif not data:
+            return {"error": "No data provided and no previous query results available."}
+
+    if not data:
+        return {"error": "No data provided for hierarchy table."}
+
+    sample = data[0]
+    all_keys = hierarchy_keys + value_keys
+    missing = [k for k in all_keys if k not in sample]
+    if missing:
+        return {"error": f"Keys not found in data: {missing}. Available keys: {list(sample.keys())}"}
+
+    return {
+        "hierarchy_table": {
+            "hierarchy_keys": hierarchy_keys,
+            "value_keys": value_keys,
+            "data": data,
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tool dispatch map — agent core uses this to execute function calls
 # ---------------------------------------------------------------------------
@@ -181,6 +247,7 @@ TOOL_DISPATCH = {
     "save_memory": save_memory,
     "read_knowledge_file": read_knowledge_file,
     "create_chart": create_chart,
+    "create_hierarchy_table": create_hierarchy_table,
 }
 
 
@@ -280,8 +347,27 @@ TOOL_DECLARATIONS = genai.types.Tool(
                 properties={
                     "chart_type": genai.types.Schema(
                         type="STRING",
-                        description="Chart type: 'line' (trends over time), 'bar' (category comparisons), or 'pie' (part-of-whole).",
-                        enum=["line", "bar", "pie"],
+                        description=(
+                            "Chart type. Options: "
+                            "'line' (trends over time), "
+                            "'area' (trends with filled volume), "
+                            "'stacked_area' (trends showing composition over time), "
+                            "'bar' (category comparisons), "
+                            "'stacked_bar' (composition across categories), "
+                            "'horizontal_bar' (rankings with long labels), "
+                            "'combo' (bars + line on dual axis — first y_key is bars, rest are lines), "
+                            "'pie' (part-of-whole, max 8 slices), "
+                            "'scatter' (correlation between two numeric values — x_key and first y_key), "
+                            "'heatmap' (density across two dimensions — data needs x_key, a y category key, and a value key), "
+                            "'waterfall' (build-up/breakdown of a total — data needs name + value columns), "
+                            "'funnel' (conversion stages — data needs name + value columns), "
+                            "'treemap' (hierarchical part-of-whole — data needs name + value columns), "
+                            "'radar' (multi-dimensional comparison — x_key is metric name, y_keys are the items being compared)."
+                        ),
+                        enum=[
+                            "line", "bar", "stacked_bar", "horizontal_bar", "area", "stacked_area",
+                            "pie", "scatter", "combo", "heatmap", "waterfall", "funnel", "treemap", "radar",
+                        ],
                     ),
                     "title": genai.types.Schema(
                         type="STRING",
@@ -296,13 +382,17 @@ TOOL_DECLARATIONS = genai.types.Tool(
                         items=genai.types.Schema(type="STRING"),
                         description="Keys in the data objects to use for y-axis values (or pie values). Multiple keys create multiple series on line/bar charts.",
                     ),
+                    "use_last_query": genai.types.Schema(
+                        type="BOOLEAN",
+                        description="If true, use the data from the most recent run_query result instead of passing data. Preferred — avoids re-running queries. Only pass data explicitly if you need a different dataset than the last query.",
+                    ),
                     "data": genai.types.Schema(
                         type="ARRAY",
                         items=genai.types.Schema(
                             type="OBJECT",
                             properties={},
                         ),
-                        description="Array of data objects to chart. Each object must contain the x_key and all y_keys.",
+                        description="Array of data objects to chart. Only needed if use_last_query is false or you need different data than the last query.",
                     ),
                     "x_label": genai.types.Schema(
                         type="STRING",
@@ -313,7 +403,42 @@ TOOL_DECLARATIONS = genai.types.Tool(
                         description="Label for the y-axis.",
                     ),
                 },
-                required=["chart_type", "title", "x_key", "y_keys", "data"],
+                required=["chart_type", "title", "x_key", "y_keys"],
+            ),
+        ),
+        genai.types.FunctionDeclaration(
+            name="create_hierarchy_table",
+            description=(
+                "Create a collapsible hierarchy table for data with multiple grouping levels "
+                "(e.g. category > sub-category > product). The UI renders it with expand/collapse "
+                "controls at each level. Use this instead of a flat table when the data has a "
+                "natural hierarchy. The query should use GROUP BY ROLLUP or UNION ALL to produce "
+                "rows at each level, with NULL values in lower hierarchy columns for subtotals."
+            ),
+            parameters=genai.types.Schema(
+                type="OBJECT",
+                properties={
+                    "hierarchy_keys": genai.types.Schema(
+                        type="ARRAY",
+                        items=genai.types.Schema(type="STRING"),
+                        description="Column names forming the hierarchy from broadest to most specific (e.g. ['category', 'sub_category', 'product_type']).",
+                    ),
+                    "value_keys": genai.types.Schema(
+                        type="ARRAY",
+                        items=genai.types.Schema(type="STRING"),
+                        description="Column names for the numeric value columns to display (e.g. ['sales', 'units', 'gross_margin']).",
+                    ),
+                    "use_last_query": genai.types.Schema(
+                        type="BOOLEAN",
+                        description="If true, use data from the most recent run_query result.",
+                    ),
+                    "data": genai.types.Schema(
+                        type="ARRAY",
+                        items=genai.types.Schema(type="OBJECT", properties={}),
+                        description="Data array. Only needed if use_last_query is false.",
+                    ),
+                },
+                required=["hierarchy_keys", "value_keys"],
             ),
         ),
     ]

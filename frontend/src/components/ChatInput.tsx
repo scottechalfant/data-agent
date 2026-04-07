@@ -7,6 +7,8 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [input, setInput] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -18,6 +20,8 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const handleSubmit = () => {
     const trimmed = input.trim();
     if (!trimmed || disabled) return;
+    setHistory((prev) => [...prev, trimmed]);
+    setHistoryIndex(-1);
     onSend(trimmed);
     setInput("");
   };
@@ -26,6 +30,36 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      const textarea = textareaRef.current;
+      if (!textarea || history.length === 0) return;
+
+      // Only activate if cursor is at the very start (home position)
+      if (textarea.selectionStart !== 0 || textarea.selectionEnd !== 0) return;
+
+      e.preventDefault();
+      const newIndex =
+        historyIndex === -1 ? history.length - 1 : Math.max(0, historyIndex - 1);
+      setHistoryIndex(newIndex);
+      setInput(history[newIndex]);
+    }
+
+    if (e.key === "ArrowDown") {
+      if (historyIndex === -1) return;
+
+      e.preventDefault();
+      if (historyIndex >= history.length - 1) {
+        // Past the end — clear back to empty
+        setHistoryIndex(-1);
+        setInput("");
+      } else {
+        const newIndex = historyIndex + 1;
+        setHistoryIndex(newIndex);
+        setInput(history[newIndex]);
+      }
     }
   };
 
@@ -41,7 +75,10 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
       <textarea
         ref={textareaRef}
         value={input}
-        onChange={(e) => setInput(e.target.value)}
+        onChange={(e) => {
+          setInput(e.target.value);
+          setHistoryIndex(-1);
+        }}
         onKeyDown={handleKeyDown}
         placeholder="Ask about sales, inventory, trends..."
         disabled={disabled}

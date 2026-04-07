@@ -1,12 +1,12 @@
 """
-Knowledge system with two phases:
+Knowledge system with two tiers:
 
-1. Startup: Load all files from gs://{bucket}/knowledge/, then use Gemini to
-   produce a concise summary of each. Summaries are held in memory and injected
-   into the system prompt.
+1. Core knowledge (e.g. datamodel.md): loaded at startup, full content injected
+   directly into the system prompt. Always available to the agent.
 
-2. Query time: The agent calls `read_knowledge_file(filename)` to load the full
-   content of specific files it needs based on the summaries.
+2. Supplemental knowledge (all other files): loaded at startup, summarized by
+   Gemini. Summaries go into the system prompt. The agent calls
+   `read_knowledge_file(filename)` to load full content on demand.
 """
 
 import logging
@@ -46,7 +46,12 @@ class KnowledgeFile:
     summary: str = ""
 
 
-_files: list[KnowledgeFile] = []
+# Core knowledge — full content in system prompt
+_core_content: str = ""
+
+# Supplemental knowledge — summaries in system prompt, full content on demand
+_supplemental_files: list[KnowledgeFile] = []
+
 _loaded: bool = False
 _summarized: bool = False
 
@@ -61,45 +66,43 @@ def _get_gcs_client() -> storage.Client:
 
 
 def load_knowledge() -> None:
-    """Read all files from gs://{bucket}/knowledge/ into memory."""
-    global _files, _loaded
+    """Load only the core knowledge file from GCS at startup. Supplemental files are loaded on demand."""
+    global _core_content, _supplemental_files, _loaded
 
-    prefix = settings.gcs_knowledge_prefix
     bucket_name = settings.gcs_bucket
+    core_path = settings.gcs_knowledge_prefix + settings.gcs_core_knowledge_file
 
-    logger.info(f"Loading knowledge files from gs://{bucket_name}/{prefix}")
+    logger.info(f"Loading core knowledge from gs://{bucket_name}/{core_path}")
 
     try:
         client = _get_gcs_client()
         bucket = client.bucket(bucket_name)
-        blobs = list(bucket.list_blobs(prefix=prefix))
+        blob = bucket.blob(core_path)
 
-        _files = []
-        for blob in blobs:
-            # Skip the prefix "directory" itself
-            name = blob.name.removeprefix(prefix)
-            if not name or name.startswith("."):
-                continue
+        _core_content = ""
+        _supplemental_files = []
 
-            try:
-                content = blob.download_as_text(encoding="utf-8")
-                _files.append(KnowledgeFile(filename=name, content=content))
-                logger.info(f"Loaded knowledge file: {name} ({len(content)} chars)")
-            except Exception:
-                logger.exception(f"Failed to read knowledge file: {name}")
+        if blob.exists():
+            _core_content = blob.download_as_text(encoding="utf-8")
+            logger.info(f"Loaded core knowledge: {settings.gcs_core_knowledge_file} ({len(_core_content)} chars)")
+        else:
+            logger.warning(f"Core knowledge file not found: gs://{bucket_name}/{core_path}")
 
     except Exception:
         logger.exception(f"Failed to list knowledge files from gs://{bucket_name}/{prefix}")
 
     _loaded = True
-    logger.info(f"Knowledge files loaded: {len(_files)} file(s)")
+    logger.info(
+        f"Knowledge loaded: core={'yes' if _core_content else 'no'}, "
+        f"supplemental={len(_supplemental_files)} file(s)"
+    )
 
 
 async def summarize_knowledge() -> None:
-    """Use Gemini to summarize each knowledge file. Called once at startup."""
+    """Use Gemini to summarize each supplemental knowledge file. Called once at startup."""
     global _summarized
 
-    if not _files:
+    if not _supplemental_files:
         _summarized = True
         return
 
@@ -108,7 +111,7 @@ async def summarize_knowledge() -> None:
 
     client = get_client()
 
-    for kf in _files:
+    for kf in _supplemental_files:
         if kf.summary:
             continue
 
@@ -124,7 +127,6 @@ async def summarize_knowledge() -> None:
             logger.info(f"Summarized {kf.filename} ({len(kf.summary)} chars)")
         except Exception:
             logger.exception(f"Failed to summarize {kf.filename}")
-            # Fallback: first 500 chars as summary
             kf.summary = f"[Auto-summary failed. First 500 chars:]\n{kf.content[:500]}"
 
     _summarized = True
@@ -132,47 +134,78 @@ async def summarize_knowledge() -> None:
 
 
 def get_knowledge_context() -> str:
-    """Return the file summaries for inclusion in the system prompt."""
-    if not _files:
+    """Return knowledge for the system prompt: core content only. Supplemental files loaded on demand."""
+    if not _core_content:
         return ""
 
-    sections = []
-    for kf in _files:
-        summary = kf.summary or f"({len(kf.content)} chars, not yet summarized)"
-        sections.append(f"### `{kf.filename}`\n{summary}")
-
-    return (
-        "## Knowledge Base\n\n"
-        "These documentation files are available. Review the summaries below to decide which "
-        "file(s) to load with `read_knowledge_file` before writing queries.\n\n"
-        + "\n\n".join(sections)
-    )
+    return f"## Data Model Reference\n\n{_core_content}"
 
 
 def get_file_content(filename: str) -> str | None:
-    """Return the full content of a specific knowledge file."""
-    for kf in _files:
+    """Return the full content of a knowledge file. Loads from GCS on demand if not in memory."""
+    if filename == settings.gcs_core_knowledge_file and _core_content:
+        return _core_content
+    for kf in _supplemental_files:
         if kf.filename == filename:
             return kf.content
+
+    # Try loading from GCS on demand
+    try:
+        client = _get_gcs_client()
+        bucket = client.bucket(settings.gcs_bucket)
+        blob = bucket.blob(settings.gcs_knowledge_prefix + filename)
+        if blob.exists():
+            content = blob.download_as_text(encoding="utf-8")
+            _supplemental_files.append(KnowledgeFile(filename=filename, content=content))
+            logger.info(f"Loaded supplemental file on demand: {filename} ({len(content)} chars)")
+            return content
+    except Exception:
+        logger.exception(f"Failed to load knowledge file on demand: {filename}")
+
     return None
 
 
 def get_filenames() -> list[str]:
-    """Return all available knowledge filenames."""
-    return [kf.filename for kf in _files]
+    """Return available knowledge filenames (core + any already-loaded supplemental + listing from GCS)."""
+    names = set()
+    if _core_content:
+        names.add(settings.gcs_core_knowledge_file)
+    for kf in _supplemental_files:
+        names.add(kf.filename)
+
+    # List all files from GCS so the agent knows what's available
+    try:
+        client = _get_gcs_client()
+        bucket = client.bucket(settings.gcs_bucket)
+        prefix = settings.gcs_knowledge_prefix
+        for blob in bucket.list_blobs(prefix=prefix):
+            name = blob.name.removeprefix(prefix)
+            if name and not name.startswith("."):
+                names.add(name)
+    except Exception:
+        logger.exception("Failed to list knowledge files from GCS")
+
+    return sorted(names)
 
 
 def get_index_summary() -> list[dict]:
     """Return a summary of loaded knowledge files (for health/debug endpoints)."""
-    return [
-        {
+    entries = []
+    if _core_content:
+        entries.append({
+            "filename": settings.gcs_core_knowledge_file,
+            "size_chars": len(_core_content),
+            "type": "core",
+        })
+    for kf in _supplemental_files:
+        entries.append({
             "filename": kf.filename,
             "size_chars": len(kf.content),
             "summary_chars": len(kf.summary),
             "summarized": bool(kf.summary),
-        }
-        for kf in _files
-    ]
+            "type": "supplemental",
+        })
+    return entries
 
 
 # ---------------------------------------------------------------------------

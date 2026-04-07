@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.agent.knowledge import load_knowledge, load_memories, summarize_knowledge, get_index_summary
+from app.agent.knowledge import load_knowledge, load_memories, get_index_summary
 from app.api.chat import router as chat_router
 from app.api.scheduled import router as scheduled_router
+from app.api.export import router as export_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,11 +38,11 @@ app.add_middleware(
 async def startup():
     load_knowledge()
     load_memories()
-    await summarize_knowledge()
 
 
 app.include_router(chat_router)
 app.include_router(scheduled_router)
+app.include_router(export_router)
 
 
 @app.get("/health")

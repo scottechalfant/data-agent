@@ -1,8 +1,8 @@
 """GCS-backed conversation and report storage.
 
 Layout:
-  gs://{bucket}/conversations/{id}.json
-  gs://{bucket}/reports/{id}.json
+  gs://{bucket}/conversations/{user_id}/{conv_id}.json
+  gs://{bucket}/reports/{id}.json          (shared — scheduled reports are global)
 """
 
 import json
@@ -32,7 +32,7 @@ def _bucket() -> storage.Bucket:
 
 
 # ---------------------------------------------------------------------------
-# Serialization (same logic as before — Gemini Content ↔ dict)
+# Serialization (Gemini Content ↔ dict)
 # ---------------------------------------------------------------------------
 
 def _serialize_contents(contents: list[types.Content]) -> list[dict]:
@@ -84,11 +84,21 @@ def _deserialize_contents(data: list[dict]) -> list[types.Content]:
 
 
 # ---------------------------------------------------------------------------
-# Conversations
+# Conversations — scoped per user
 # ---------------------------------------------------------------------------
 
-async def get_conversation(conversation_id: str) -> list[types.Content] | None:
-    blob = _bucket().blob(f"conversations/{conversation_id}.json")
+def _conv_path(user_id: str, conversation_id: str) -> str:
+    return f"conversations/{user_id}/{conversation_id}.json"
+
+
+def _conv_prefix(user_id: str) -> str:
+    return f"conversations/{user_id}/"
+
+
+async def get_conversation(
+    user_id: str, conversation_id: str
+) -> list[types.Content] | None:
+    blob = _bucket().blob(_conv_path(user_id, conversation_id))
     if not blob.exists():
         return None
     data = json.loads(blob.download_as_text())
@@ -96,11 +106,12 @@ async def get_conversation(conversation_id: str) -> list[types.Content] | None:
 
 
 async def save_conversation(
+    user_id: str,
     conversation_id: str,
     history: list[types.Content],
     title: str | None = None,
 ) -> None:
-    blob = _bucket().blob(f"conversations/{conversation_id}.json")
+    blob = _bucket().blob(_conv_path(user_id, conversation_id))
 
     # Merge with existing metadata if present
     doc_data: dict = {}
@@ -109,6 +120,7 @@ async def save_conversation(
 
     doc_data["history"] = _serialize_contents(history)
     doc_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    doc_data["user_id"] = user_id
     if title:
         doc_data["title"] = title
     doc_data.setdefault("created_at", doc_data["updated_at"])
@@ -119,11 +131,11 @@ async def save_conversation(
     )
 
 
-async def list_conversations(limit: int = 50) -> list[dict]:
+async def list_conversations(user_id: str, limit: int = 50) -> list[dict]:
     bucket = _bucket()
-    blobs = list(bucket.list_blobs(prefix="conversations/"))
+    prefix = _conv_prefix(user_id)
+    blobs = list(bucket.list_blobs(prefix=prefix))
 
-    # Sort by updated time (falls back to GCS blob updated timestamp)
     summaries = []
     for blob in blobs:
         if not blob.name.endswith(".json"):
@@ -132,7 +144,7 @@ async def list_conversations(limit: int = 50) -> list[dict]:
             data = json.loads(blob.download_as_text())
         except Exception:
             continue
-        conv_id = blob.name.removeprefix("conversations/").removesuffix(".json")
+        conv_id = blob.name.removeprefix(prefix).removesuffix(".json")
         summaries.append({
             "id": conv_id,
             "title": data.get("title", "Untitled"),
@@ -145,7 +157,7 @@ async def list_conversations(limit: int = 50) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Trend reports
+# Trend reports — shared (not user-scoped)
 # ---------------------------------------------------------------------------
 
 async def save_trend_report(report: dict) -> str:

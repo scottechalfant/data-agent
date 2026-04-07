@@ -47,9 +47,26 @@ class AgentMessage:
 
 
 @dataclass
+class Clarification:
+    """A question the agent needs answered before proceeding."""
+    question: str
+    response_type: str = "free_text"  # "free_text" or "multiple_choice"
+    options: list[str] = field(default_factory=list)
+
+
+@dataclass
+class HierarchyTableSpec:
+    hierarchy_keys: list[str]
+    value_keys: list[str]
+    data: list[dict[str, Any]]
+
+
+@dataclass
 class AgentResponse:
     message: str
     data: list[dict[str, Any]] | None = None  # query result rows
     charts: list[ChartSpec] = field(default_factory=list)
+    hierarchy_tables: list[HierarchyTableSpec] = field(default_factory=list)
     steps: list[StepLog] = field(default_factory=list)
     tool_calls_made: list[str] = field(default_factory=list)
+    clarification: Clarification | None = None  # set when agent needs user input
