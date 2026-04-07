@@ -13,7 +13,7 @@ from app.config import settings
 from app.agent.tools import TOOL_DECLARATIONS, TOOL_DISPATCH
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.knowledge import get_knowledge_context, get_memories_context
-from app.agent.types import AgentResponse, ChartSpec, Clarification, HierarchyTableSpec, StepLog
+from app.agent.types import AgentResponse, ContentBlock, ColumnFormat, Clarification, StepLog, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ TOOL_STEP_LABELS = {
     "get_current_date": "Research",
     "run_query": "Query",
     "save_memory": "Memory",
-    "create_chart": "Visualize",
+    "add_block": "Respond",
 }
 
 _client: genai.Client | None = None
@@ -136,8 +136,18 @@ def _describe_tool_call(name: str, args: dict) -> str:
         memory = args.get("memory", "")
         return f"Saving to memory: {memory[:80]}{'...' if len(memory) > 80 else ''}"
 
-    if name == "create_chart":
-        return f"Creating {args.get('chart_type', '?')} chart: {args.get('title', '?')}"
+    if name == "add_block":
+        bt = args.get("block_type", "?")
+        if bt == "text":
+            content = args.get("content", "")
+            return f"Adding text: {content[:60]}{'...' if len(content) > 60 else ''}"
+        if bt == "chart":
+            return f"Adding {args.get('chart_type', '?')} chart: {args.get('chart_title', '?')}"
+        if bt == "table":
+            return f"Adding data table: {args.get('caption', 'data')}"
+        if bt == "hierarchy_table":
+            return f"Adding hierarchy table"
+        return f"Adding {bt} block"
 
     return f"Calling {name}"
 
@@ -174,9 +184,18 @@ def _summarize_result(name: str, result_str: str, max_len: int = 500) -> str:
         tables = parsed.get("tables", [])
         return f"{len(tables)} tables: {', '.join(t['name'] for t in tables[:10])}"
 
-    if name == "create_chart":
-        chart = parsed.get("chart", {})
-        return f"Created {chart.get('type', '?')} chart: {chart.get('title', '?')}"
+    if name == "add_block":
+        block = parsed.get("block", {})
+        bt = block.get("type", "?")
+        if bt == "chart":
+            return f"Added {block.get('chart_type', '?')} chart: {block.get('chart_title', '?')}"
+        if bt == "table":
+            rows = block.get("rows", [])
+            return f"Added table with {len(rows)} rows"
+        if bt == "text":
+            content = block.get("content", "")
+            return f"Added text ({len(content)} chars)"
+        return f"Added {bt} block"
 
     if name == "save_memory":
         return parsed.get("entry", json.dumps(parsed, default=str)[:max_len])
@@ -197,7 +216,7 @@ TOOL_STATUS_MESSAGES = {
     "get_current_date": "Getting current date...",
     "run_query": "Running query...",
     "save_memory": "Saving to memory...",
-    "create_chart": "Creating chart...",
+    "add_block": "Building response...",
 }
 
 # Type for the progress callback
@@ -421,10 +440,10 @@ async def run_agent(
     history.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
 
     tool_calls_made: list[str] = []
-    last_data: list[dict] | None = None
-    charts: list[ChartSpec] = []
-    hierarchy_tables: list[HierarchyTableSpec] = []
+    blocks: list[ContentBlock] = []
     steps: list[StepLog] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
     step_counter = 0
 
     for round_num in range(MAX_TOOL_ROUNDS):
@@ -451,6 +470,12 @@ async def run_agent(
         )
 
         logger.info(f"Gemini round {round_num + 1}: {_time.monotonic() - t_gemini:.1f}s")
+
+        # Track token usage
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            um = response.usage_metadata
+            total_input_tokens += getattr(um, 'prompt_token_count', 0) or 0
+            total_output_tokens += getattr(um, 'candidates_token_count', 0) or 0
 
         candidate = response.candidates[0]
         parts = candidate.content.parts
@@ -479,13 +504,16 @@ async def run_agent(
                     reasoning="Formulated final response.",
                 ))
 
+            # If the agent produced text but no text blocks, add the text as a block
+            if text and not any(b.type == "text" for b in blocks):
+                blocks.insert(0, ContentBlock(type="text", content=text))
+
             return AgentResponse(
                 message=text,
-                data=last_data,
-                charts=charts,
-                hierarchy_tables=hierarchy_tables,
+                blocks=blocks,
                 steps=steps,
                 tool_calls_made=tool_calls_made,
+                token_usage=TokenUsage(total_input_tokens, total_output_tokens),
             ), history
 
         # Execute each function call and build function response parts
@@ -540,42 +568,33 @@ async def run_agent(
             # Only attach reasoning to the first tool call in a round
             reasoning = None
 
-            # Track query result data for the API response
-            if tool_name == "run_query":
+            # Collect content blocks
+            if tool_name == "add_block":
                 try:
                     parsed = json.loads(result_str)
-                    if "rows" in parsed:
-                        last_data = parsed["rows"]
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-            # Collect chart specs
-            if tool_name == "create_chart":
-                try:
-                    parsed = json.loads(result_str)
-                    if "chart" in parsed:
-                        c = parsed["chart"]
-                        charts.append(ChartSpec(
-                            type=c["type"],
-                            title=c["title"],
-                            x_key=c["x_key"],
-                            y_keys=c["y_keys"],
-                            data=c["data"],
-                            x_label=c.get("x_label", ""),
-                            y_label=c.get("y_label", ""),
-                        ))
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-            if tool_name == "create_hierarchy_table":
-                try:
-                    parsed = json.loads(result_str)
-                    if "hierarchy_table" in parsed:
-                        h = parsed["hierarchy_table"]
-                        hierarchy_tables.append(HierarchyTableSpec(
-                            hierarchy_keys=h["hierarchy_keys"],
-                            value_keys=h["value_keys"],
-                            data=h["data"],
+                    if "block" in parsed:
+                        b = parsed["block"]
+                        blocks.append(ContentBlock(
+                            type=b["type"],
+                            content=b.get("content"),
+                            chart_type=b.get("chart_type"),
+                            chart_title=b.get("chart_title"),
+                            x_key=b.get("x_key"),
+                            y_keys=b.get("y_keys"),
+                            x_label=b.get("x_label"),
+                            y_label=b.get("y_label"),
+                            chart_data=b.get("data"),
+                            columns=[
+                                ColumnFormat(
+                                    key=c["key"], label=c["label"],
+                                    format=c["format"], align=c.get("align", "right"),
+                                )
+                                for c in b.get("columns", [])
+                            ] if b.get("columns") else None,
+                            rows=b.get("rows"),
+                            caption=b.get("caption"),
+                            hierarchy_keys=b.get("hierarchy_keys"),
+                            hierarchy_data=b.get("data") if b["type"] == "hierarchy_table" else None,
                         ))
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -593,13 +612,16 @@ async def run_agent(
         logger.info(f"Agent round {round_num + 1}: executed {len(function_calls)} tool(s)")
 
     # If we exhaust rounds, return what we have
+    blocks.insert(0, ContentBlock(
+        type="text",
+        content="I reached the maximum number of tool calls. Here's what I found so far.",
+    ))
     return AgentResponse(
-        message="I reached the maximum number of tool calls. Here's what I found so far based on the queries I ran.",
-        data=last_data,
-        charts=charts,
-        hierarchy_tables=hierarchy_tables,
+        message="",
+        blocks=blocks,
         steps=steps,
         tool_calls_made=tool_calls_made,
+        token_usage=TokenUsage(total_input_tokens, total_output_tokens),
     ), history
 
 

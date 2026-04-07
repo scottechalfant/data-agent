@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import type { Message, ChatResponse, ClarificationData, HierarchyTableSpec } from "../types/api";
+import type { Message, ChatResponse, ClarificationData, ContentBlock } from "../types/api";
 
 const API_BASE = import.meta.env.DEV ? "http://localhost:8080/api" : "/api";
 const POLL_INTERVAL = 500; // ms
@@ -30,7 +30,7 @@ function createTab(): ChatTab {
     status: null,
     plan: null,
     startedAt: null,
-    model: "gemini-2.5-flash",
+    model: (localStorage.getItem("preferred_model") as ModelChoice) || "gemini-2.5-flash",
   };
 }
 
@@ -195,6 +195,12 @@ export function useChatTabs() {
                 ],
               }));
             } else {
+              // Extract text from blocks for the message content
+              const textContent = (result.blocks || [])
+                .filter((b: ContentBlock) => b.type === "text")
+                .map((b: ContentBlock) => b.content || "")
+                .join("\n\n");
+
               updateTab(tabId, (t) => ({
                 ...t,
                 conversationId: result.conversation_id,
@@ -202,12 +208,11 @@ export function useChatTabs() {
                   ...t.messages,
                   {
                     role: "assistant" as const,
-                    content: result.message,
-                    data: result.data ?? undefined,
-                    charts: result.charts ?? undefined,
-                    hierarchyTables: result.hierarchy_tables ?? undefined,
+                    content: textContent,
+                    blocks: result.blocks ?? undefined,
                     steps: result.steps ?? undefined,
                     toolCalls: result.tool_calls_made,
+                    tokenUsage: result.token_usage ?? undefined,
                     timestamp: Date.now(),
                     durationMs: Date.now() - startTime,
                   },
@@ -256,6 +261,7 @@ export function useChatTabs() {
   const setModel = useCallback(
     (tabId: number, model: ModelChoice) => {
       updateTab(tabId, (t) => ({ ...t, model }));
+      localStorage.setItem("preferred_model", model);
     },
     [updateTab]
   );

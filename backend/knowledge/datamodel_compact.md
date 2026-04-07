@@ -70,16 +70,6 @@ One row per order line item. Primary sales fact table. Refreshed every 15 min.
 - `discountAmount` is STRING — always `CAST(discountAmount AS FLOAT64)`
 - **myRTIC fees appear TWICE** — as STRUCT on base row AND as separate fee line items. Never sum both.
 - Table is very large — **always filter by date range**
-- Exclude non-product items from unit counts:
-  ```sql
-  AND item_parent NOT LIKE '%Fee%'
-  AND item_parent NOT LIKE '%Replacement%'
-  AND item_parent NOT LIKE '%Gasket%'
-  AND item_parent NOT LIKE '%Drain Plug%'
-  AND item_parent NOT LIKE '% Feet'
-  AND item_parent NOT LIKE '%Lid%'
-  ```
-
 **Financial metrics hierarchy:**
 - `sales` = product_sales + shipping_paid + credits (primary revenue)
 - `gross_margin` = product_sales - material_cost - amazon_fees - square_fees

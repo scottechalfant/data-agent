@@ -1,30 +1,39 @@
 export interface ChatRequest {
   message: string;
   conversation_id?: string;
+  model?: string;
 }
 
-export interface ChartSpec {
-  type:
-    | "line"
-    | "bar"
-    | "stacked_bar"
-    | "horizontal_bar"
-    | "area"
-    | "stacked_area"
-    | "pie"
-    | "scatter"
-    | "combo"
-    | "heatmap"
-    | "waterfall"
-    | "funnel"
-    | "treemap"
-    | "radar";
-  title: string;
-  x_key: string;
-  y_keys: string[];
-  data: Record<string, unknown>[];
-  x_label: string;
-  y_label: string;
+export interface ColumnDef {
+  key: string;
+  label: string;
+  format: "text" | "id" | "currency" | "number" | "percent" | "percent_change" | "bps_change";
+  align?: "left" | "right";
+}
+
+export interface ContentBlock {
+  type: "text" | "chart" | "table" | "hierarchy_table";
+
+  // text
+  content?: string;
+
+  // chart
+  chart_type?: string;
+  chart_title?: string;
+  x_key?: string;
+  y_keys?: string[];
+  x_label?: string;
+  y_label?: string;
+  data?: Record<string, unknown>[];
+
+  // table
+  columns?: ColumnDef[];
+  rows?: Record<string, unknown>[];
+  caption?: string;
+
+  // hierarchy_table
+  hierarchy_keys?: string[];
+  // uses columns + data
 }
 
 export interface StepLog {
@@ -36,20 +45,17 @@ export interface StepLog {
   reasoning?: string | null;
 }
 
-export interface HierarchyTableSpec {
-  hierarchy_keys: string[];
-  value_keys: string[];
-  data: Record<string, unknown>[];
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export interface ChatResponse {
   conversation_id: string;
-  message: string;
-  data?: Record<string, unknown>[];
-  charts?: ChartSpec[];
-  hierarchy_tables?: HierarchyTableSpec[];
+  blocks?: ContentBlock[];
   steps?: StepLog[];
   tool_calls_made: string[];
+  token_usage?: TokenUsage;
 }
 
 export interface ConversationSummary {
@@ -67,6 +73,12 @@ export interface TrendReport {
   created_at: string;
 }
 
+export interface HierarchyTableSpec {
+  hierarchy_keys: string[];
+  value_keys: string[];
+  data: Record<string, unknown>[];
+}
+
 export interface ClarificationData {
   question: string;
   response_type: "free_text" | "multiple_choice";
@@ -77,12 +89,11 @@ export interface ClarificationData {
 export interface Message {
   role: "user" | "assistant";
   content: string;
-  data?: Record<string, unknown>[];
-  charts?: ChartSpec[];
+  blocks?: ContentBlock[];
   steps?: StepLog[];
   toolCalls?: string[];
   clarification?: ClarificationData;
-  hierarchyTables?: HierarchyTableSpec[];
+  tokenUsage?: TokenUsage;
   timestamp?: number;
   durationMs?: number;
 }

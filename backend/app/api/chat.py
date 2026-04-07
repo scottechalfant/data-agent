@@ -96,33 +96,38 @@ async def chat(request_body: ChatRequest, request: Request):
                     "options": response.clarification.options or [],
                 }
             else:
-                def _safe_list(val):
-                    if val is None:
-                        return []
-                    return list(val)
+                def _serialize_block(b):
+                    d = {"type": b.type}
+                    if b.type == "text":
+                        d["content"] = b.content
+                    elif b.type == "chart":
+                        d["chart_type"] = b.chart_type
+                        d["chart_title"] = b.chart_title
+                        d["x_key"] = b.x_key
+                        d["y_keys"] = b.y_keys
+                        d["x_label"] = b.x_label
+                        d["y_label"] = b.y_label
+                        d["data"] = b.chart_data
+                    elif b.type == "table":
+                        d["columns"] = [
+                            {"key": c.key, "label": c.label, "format": c.format, "align": c.align}
+                            for c in (b.columns or [])
+                        ]
+                        d["rows"] = b.rows
+                        d["caption"] = b.caption
+                    elif b.type == "hierarchy_table":
+                        d["hierarchy_keys"] = b.hierarchy_keys
+                        d["columns"] = [
+                            {"key": c.key, "label": c.label, "format": c.format, "align": c.align}
+                            for c in (b.value_columns or b.columns or [])
+                        ]
+                        d["data"] = b.hierarchy_data
+                    return d
 
                 task_state["result"] = {
                     "type": "result",
                     "conversation_id": conversation_id,
-                    "message": response.message or "",
-                    "data": response.data,
-                    "charts": [
-                        {
-                            "type": c.type, "title": c.title,
-                            "x_key": c.x_key, "y_keys": c.y_keys,
-                            "data": c.data, "x_label": c.x_label,
-                            "y_label": c.y_label,
-                        }
-                        for c in _safe_list(response.charts)
-                    ],
-                    "hierarchy_tables": [
-                        {
-                            "hierarchy_keys": h.hierarchy_keys,
-                            "value_keys": h.value_keys,
-                            "data": h.data,
-                        }
-                        for h in _safe_list(response.hierarchy_tables)
-                    ],
+                    "blocks": [_serialize_block(b) for b in (response.blocks or [])],
                     "steps": [
                         {
                             "step": s.step, "description": s.description,
@@ -130,9 +135,13 @@ async def chat(request_body: ChatRequest, request: Request):
                             "tool_output_summary": s.tool_output_summary,
                             "reasoning": s.reasoning,
                         }
-                        for s in _safe_list(response.steps)
+                        for s in (response.steps or [])
                     ],
-                    "tool_calls_made": _safe_list(response.tool_calls_made),
+                    "tool_calls_made": list(response.tool_calls_made or []),
+                    "token_usage": {
+                        "input_tokens": response.token_usage.input_tokens,
+                        "output_tokens": response.token_usage.output_tokens,
+                    } if response.token_usage else None,
                 }
 
             task_state["status"] = "complete"

@@ -244,15 +244,8 @@
 - Table is very large (~30M+ rows); always filter by date range. Use `order_date > '2024-01-01'` or similar
 - `fulfillment_date` can be NULL for unfulfilled orders
 - Exclude test/internal customers with known customer_id filters when needed
-- When aggregating units sold by product, exclude non-product line items using these `item_parent` filters:
-  ```sql
-  AND item_parent NOT LIKE '%Fee%'           -- customization fees (e.g. MyRTIC Customization Fee)
-  AND item_parent NOT LIKE '%Replacement%'   -- replacement parts
-  AND item_parent NOT LIKE '%Gasket%'        -- gaskets
-  AND item_parent NOT LIKE '%Drain Plug%'    -- drain plugs
-  AND item_parent NOT LIKE '% Feet'          -- cooler feet
-  AND item_parent NOT LIKE '%Lid%'           -- standalone lids
-  ```
+- The table includes fee line items, replacement parts, and accessories alongside regular products. \
+Do NOT filter these out unless the user specifically asks to exclude them.
   Accessories (ice packs, duffle bags, straps, baskets) are intentionally kept — only fees and replacement/repair parts are excluded.
 
 ---
