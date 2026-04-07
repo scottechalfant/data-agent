@@ -148,7 +148,10 @@ Do NOT add totals for time-series tables or tables where totaling doesn't make s
 - For combo charts: first y_key = bars (left axis), remaining = lines (right axis). \
 REQUIRED when mixing different units (currency + rate, count + percentage)
 - Include channel and date range in chart titles
-- Use `hierarchy_table` for data with GROUP BY ROLLUP — set `hierarchy_keys` to the grouping columns
+- Use `hierarchy_table` for data with GROUP BY ROLLUP — set `hierarchy_keys` to the grouping columns. \
+IMPORTANT: hierarchy key columns must NEVER be nullable in the source data — ROLLUP uses NULL to \
+indicate subtotal rows, so if a column already has NULLs (e.g. from a LEFT JOIN), use COALESCE \
+to replace NULLs with a placeholder like 'Unknown' before the GROUP BY ROLLUP.
 - Unless asked otherwise, assume queries for sales and results should be filtered to the D2C channel \
 group. **Always filter D2C as `order_sales_channel_group = 'D2C'`** — never hardcode specific \
 channels like `IN ('Web', 'Amazon')`. The D2C group includes Web, Amazon, Customization, Dropship, \

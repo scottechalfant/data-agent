@@ -31,17 +31,20 @@ function buildTree(
   const root: TreeNode[] = [];
   let grandTotal: TreeNode | null = null;
 
-  // Sort data by depth (parents before children) so tree builds correctly
-  const sortedData = [...data].sort((a, b) => {
-    const depthA = hierarchyKeys.findIndex(
-      (k) => a[k] === null || a[k] === undefined || a[k] === ""
+  // Separate rows by depth, then process parents before children
+  const rowsByDepth: Map<number, typeof data> = new Map();
+  for (const row of data) {
+    const depth = hierarchyKeys.findIndex(
+      (k) => row[k] === null || row[k] === undefined || row[k] === ""
     );
-    const depthB = hierarchyKeys.findIndex(
-      (k) => b[k] === null || b[k] === undefined || b[k] === ""
-    );
-    return (depthA === -1 ? hierarchyKeys.length : depthA) -
-           (depthB === -1 ? hierarchyKeys.length : depthB);
-  });
+    const d = depth === -1 ? hierarchyKeys.length : depth;
+    if (!rowsByDepth.has(d)) rowsByDepth.set(d, []);
+    rowsByDepth.get(d)!.push(row);
+  }
+
+  // Process in depth order: 0 (grand total), 1 (top level), 2, ...
+  const sortedDepths = [...rowsByDepth.keys()].sort((a, b) => a - b);
+  const sortedData = sortedDepths.flatMap((d) => rowsByDepth.get(d)!);
 
   for (const row of sortedData) {
     const depth = hierarchyKeys.findIndex(
@@ -50,14 +53,16 @@ function buildTree(
     const effectiveDepth = depth === -1 ? hierarchyKeys.length : depth;
 
     if (effectiveDepth === 0) {
-      // Grand total row
-      grandTotal = {
-        label: "TOTAL",
-        level: 0,
-        row,
-        children: [],
-        key: "total",
-      };
+      // Grand total row — keep the first one found (SQL orders it first with correct totals)
+      if (!grandTotal) {
+        grandTotal = {
+          label: "TOTAL",
+          level: 0,
+          row,
+          children: [],
+          key: "total",
+        };
+      }
       continue;
     }
 

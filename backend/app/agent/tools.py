@@ -1,5 +1,8 @@
 """BigQuery tools exposed to the Gemini agent via function calling."""
 
+import contextvars
+from dataclasses import dataclass, field
+
 from google import genai
 from google.cloud import bigquery
 
@@ -7,9 +10,23 @@ from app.config import settings
 
 _bq_client: bigquery.Client | None = None
 
-# Cache recent query results to avoid re-running identical SQL
-_query_cache: dict[str, dict] = {}
-_last_query_result: dict | None = None
+
+@dataclass
+class RequestContext:
+    """Per-request state for query caching and last result tracking."""
+    query_cache: dict[str, dict] = field(default_factory=dict)
+    last_query_result: dict | None = None
+
+
+# Each async task gets its own context automatically
+_request_ctx: contextvars.ContextVar[RequestContext] = contextvars.ContextVar(
+    "_request_ctx", default=RequestContext()
+)
+
+
+def init_request_context() -> None:
+    """Initialize a fresh request context. Call at the start of each agent run."""
+    _request_ctx.set(RequestContext())
 
 
 def get_bq_client() -> bigquery.Client:
@@ -20,8 +37,8 @@ def get_bq_client() -> bigquery.Client:
 
 
 def get_last_query_result() -> dict | None:
-    """Return the most recent query result (used by add_block)."""
-    return _last_query_result
+    """Return the most recent query result for this request."""
+    return _request_ctx.get().last_query_result
 
 
 # ---------------------------------------------------------------------------
@@ -30,16 +47,16 @@ def get_last_query_result() -> dict | None:
 
 def run_query(sql: str) -> dict:
     """Execute a read-only SQL query against BigQuery and return results."""
-    global _last_query_result
+    ctx = _request_ctx.get()
     normalized = sql.strip().rstrip(";").upper()
     if not normalized.startswith("SELECT") and not normalized.startswith("WITH"):
         return {"error": "Only SELECT queries are allowed."}
 
     # Return cached result for identical SQL
     cache_key = sql.strip()
-    if cache_key in _query_cache:
-        _last_query_result = _query_cache[cache_key]
-        return _last_query_result
+    if cache_key in ctx.query_cache:
+        ctx.last_query_result = ctx.query_cache[cache_key]
+        return ctx.last_query_result
 
     client = get_bq_client()
 
@@ -76,8 +93,8 @@ def run_query(sql: str) -> dict:
             }
         else:
             res = {"rows": rows, "total_rows": len(rows)}
-        _query_cache[cache_key] = res
-        _last_query_result = res
+        ctx.query_cache[cache_key] = res
+        ctx.last_query_result = res
         return res
     except Exception as e:
         return {"error": f"Query execution failed: {str(e)}"}

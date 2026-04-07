@@ -357,9 +357,9 @@ async def run_agent(
         if cancel_event and cancel_event.is_set():
             raise CancelledError()
 
-    # Clear query cache for this request
-    from app.agent.tools import _query_cache
-    _query_cache.clear()
+    # Initialize per-request context for query caching
+    from app.agent.tools import init_request_context
+    init_request_context()
 
     # Inject current date so the agent never has to guess
     from datetime import datetime
