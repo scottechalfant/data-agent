@@ -39,7 +39,7 @@ def _serialize_contents(contents: list[types.Content]) -> list[dict]:
     serialized = []
     for content in contents:
         parts_data = []
-        for part in content.parts:
+        for part in (content.parts or []):
             if part.text is not None:
                 parts_data.append({"text": part.text})
             elif part.function_call is not None:

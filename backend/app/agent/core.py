@@ -478,7 +478,7 @@ async def run_agent(
             total_output_tokens += getattr(um, 'candidates_token_count', 0) or 0
 
         candidate = response.candidates[0]
-        parts = candidate.content.parts
+        parts = candidate.content.parts or []
 
         # Capture any reasoning text the model emitted in this round
         reasoning_texts = [p.text for p in parts if p.text]

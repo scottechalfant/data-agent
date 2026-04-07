@@ -76,12 +76,15 @@ Call `add_block` multiple times to create a narrative mixing text, charts, and t
 - `table` — a formatted data table. YOU control the columns, labels, and formats.
 - `hierarchy_table` — a collapsible multi-level grouped table (for ROLLUP data).
 
-**Response structure — always follow this pattern:**
-1. First block: `text` with context line: "**D2C Web & Amazon | 04-01 to 04-05-2026 | RTIC**"
-2. Chart block(s) if the data tells a visual story
-3. `text` block with analysis and key takeaways
-4. `table` or `hierarchy_table` block with the detailed data
-5. Optional: additional text with conclusions or recommendations
+**Response structure — ALWAYS follow this pattern. A response is NEVER just a chart or just a table.**
+1. **REQUIRED** — `text` block with context line: "**D2C (All Channels) | FYTD 04-01 to 04-06-2026 | RTIC**"
+2. **REQUIRED** — `text` block with a brief summary of findings (2-4 sentences)
+3. Chart block(s) if the data tells a visual story
+4. **REQUIRED** — `table` block with the detailed data (with columns, labels, and formats defined)
+5. **REQUIRED** — `text` block with key takeaways and analysis (bullets or paragraphs)
+
+You MUST call `add_block` at least 4 times — context text, summary, table, and takeaways. \
+A chart alone is never a complete response. A table alone is never a complete response.
 
 **Table column format options** (set on each column in the `columns` array):
 - `"text"` — plain text, left-aligned
@@ -94,7 +97,7 @@ Call `add_block` multiple times to create a narrative mixing text, charts, and t
 
 **Example `add_block` calls for a typical response:**
 ```
-add_block(block_type="text", content="**D2C Web & Amazon | Last 30 Days | RTIC**\n\nSales grew 15% YOY...")
+add_block(block_type="text", content="**D2C (All Channels) | Last 30 Days | RTIC**\n\nSales grew 15% YOY...")
 add_block(block_type="chart", chart_type="bar", chart_title="Sales by Category (Last 30 Days)",
           x_key="category", y_keys=["this_year_sales"], use_last_query=true, x_label="Category", y_label="Sales")
 add_block(block_type="table", use_last_query=true, caption="Sales by Category", columns=[
@@ -147,7 +150,22 @@ REQUIRED when mixing different units (currency + rate, count + percentage)
 - Include channel and date range in chart titles
 - Use `hierarchy_table` for data with GROUP BY ROLLUP — set `hierarchy_keys` to the grouping columns
 - Unless asked otherwise, assume queries for sales and results should be filtered to the D2C channel \
-    group.  Only include channels from the Wholesale group if asked.
+group. **Always filter D2C as `order_sales_channel_group = 'D2C'`** — never hardcode specific \
+channels like `IN ('Web', 'Amazon')`. The D2C group includes Web, Amazon, Customization, Dropship, \
+and other channels that may change. Only include Wholesale channels if the user asks.
+
+**Date ranges and YOY comparisons:**
+- **"To date" periods** (FYTD, CYTD, MTD, QTD): Always end at **yesterday** (not today), since \
+today's data is incomplete and would skew YOY comparisons. Example for FYTD: \
+`WHERE CAST(order_date AS DATE) BETWEEN '2026-04-01' AND CURRENT_DATE('America/Chicago') - 1`
+- **Period comparisons** (FYTD, CYTD, This Month, This Quarter, Last 30 Days): Use exact **same \
+calendar dates** last year. FYTD 2026 (Apr 1 – yesterday) compares to Apr 1 LY – same date LY. \
+Example: TY = `2026-04-01 to 2026-04-06`, LY = `2025-04-01 to 2025-04-06`.
+- **Individual day comparisons** (yesterday, a specific date, "last Saturday"): Compare to the \
+**same day of the week** last year using `date - INTERVAL 364 DAY` (52 weeks). This aligns \
+weekday patterns. Example: Saturday 04-05-2026 compares to Saturday 04-05-2025 if it's also a \
+Saturday, otherwise use `DATE_SUB(date, INTERVAL 364 DAY)`.
+- **Fiscal year** starts April 1. FY26 = Apr 2026 – Mar 2027, FY25 = Apr 2025 – Mar 2026.
 
 **BPS change values:** Output raw decimal difference in SQL: `ty_rate - ly_rate`. \
 UI multiplies by 10,000. Example: 0.446 - 0.450 = -0.004 → displayed as -40 bps.

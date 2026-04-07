@@ -226,8 +226,8 @@ function ModelToggle({
   disabled: boolean;
 }) {
   const options: { value: ModelChoice; label: string }[] = [
-    { value: "gemini-2.5-flash", label: "Flash" },
-    { value: "gemini-2.5-pro", label: "Pro" },
+    { value: "gemini-2.5-flash", label: "Flash (faster)" },
+    { value: "gemini-2.5-pro", label: "Pro (smarter)" },
   ];
 
   return (
