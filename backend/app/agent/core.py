@@ -303,7 +303,6 @@ async def check_clarification(
 async def generate_plan(
     client: genai.Client,
     user_message: str,
-    system_instruction: str,
 ) -> str:
     """Generate a brief plan description before the main agent loop."""
     prompt = PLAN_PROMPT.format(user_message=user_message)
@@ -313,7 +312,6 @@ async def generate_plan(
             model=settings.gemini_model_fast,
             contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
             config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
                 temperature=0.0,
             ),
         )
@@ -396,7 +394,7 @@ async def run_agent(
             check_clarification(client, user_message, system_instruction)
         )
         plan_task = asyncio.create_task(
-            generate_plan(client, user_message, system_instruction)
+            generate_plan(client, user_message)
         )
 
         clarification = await clarification_task
@@ -428,7 +426,7 @@ async def run_agent(
         if on_progress:
             await on_progress("Planning...")
         t0 = _time.monotonic()
-        plan = await generate_plan(client, user_message, system_instruction)
+        plan = await generate_plan(client, user_message)
         logger.info(f"Plan generation: {_time.monotonic() - t0:.1f}s")
         if on_progress and plan:
             await on_progress(f"plan:{plan}")

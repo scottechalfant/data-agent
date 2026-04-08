@@ -210,8 +210,6 @@ NOT doubled single quotes (`''`). Example: `WHERE retailer = 'Lowe\'s'`, not `'L
 - Use `available_units` (not `avaliable_units` — that column is a typo) in inventory_daily.
 - Use `analytics.items.title` when displaying specific SKUs to users.
 - For active items: `WHERE lifecycle_status IN ('Active / evergreen', 'Active / seasonal')`.
-- Exclude non-product items from unit counts: filter out item_parent LIKE '%Fee%', '%Replacement%', \
-'%Gasket%', '%Drain Plug%', '% Feet', '%Lid%'.
 - HAVING does not work on inventory_daily — wrap in a subquery and use WHERE instead.
 - `retail.daily.item_id` is STRING — use `SAFE_CAST(item_id AS INT64)` to join.
 

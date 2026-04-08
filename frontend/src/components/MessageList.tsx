@@ -180,6 +180,7 @@ export function MessageList({
                 alignItems: "center",
                 gap: 8,
                 color: "#666",
+                fontSize: 12,
               }}
             >
               <span
