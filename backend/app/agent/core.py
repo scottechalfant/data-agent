@@ -508,6 +508,29 @@ async def run_agent(
             if text and not any(b.type == "text" for b in blocks):
                 blocks.insert(0, ContentBlock(type="text", content=text))
 
+            # Fallback: if queries ran but no blocks were created, render the last query result
+            from app.agent.tools import get_last_query_result as _get_last
+            last_result = _get_last()
+            if not blocks and last_result and "rows" in last_result and last_result["rows"]:
+                rows = last_result["rows"]
+                cols = list(rows[0].keys())
+                blocks.append(ContentBlock(
+                    type="table",
+                    columns=[
+                        ColumnFormat(key=c, label=c.replace("_", " ").title(), format="text")
+                        for c in cols
+                    ],
+                    rows=rows,
+                ))
+            elif not blocks and text:
+                # Already handled above
+                pass
+            elif not blocks:
+                blocks.append(ContentBlock(
+                    type="text",
+                    content="I wasn't able to produce a formatted response. Please try rephrasing your question.",
+                ))
+
             return AgentResponse(
                 message=text,
                 blocks=blocks,
